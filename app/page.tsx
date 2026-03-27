@@ -16,7 +16,7 @@ export default function HomePage() {
               <p className="text-xs text-muted-foreground">Digital Marketplace for Construction</p>
             </div>
           </div>
-          <Link href="/auth">
+          <Link href="/auth?switch=1">
             <Button>Get Started</Button>
           </Link>
         </div>
@@ -31,7 +31,7 @@ export default function HomePage() {
           retailers and big distributors.
         </p>
         <div className="flex justify-center gap-4">
-          <Link href="/auth">
+          <Link href="/auth?switch=1">
             <Button size="lg" className="px-8 text-lg">
               Get Started
             </Button>

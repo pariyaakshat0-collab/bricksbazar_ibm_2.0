@@ -3,9 +3,26 @@
 import { useEffect, useMemo, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Search, Users, Shield, Loader2 } from "lucide-react"
+
+type VerificationRequest = {
+  requestedRole: "seller" | "distributor"
+  businessName: string
+  contactPhone: string
+  businessAddress: string
+  city: string
+  state: string
+  pincode: string
+  gstNumber?: string
+  idProofType: string
+  idProofNumber: string
+  status: "pending" | "approved" | "rejected"
+  adminNotes?: string
+  reviewedAt?: string
+}
 
 type ApiUser = {
   id: string
@@ -14,42 +31,99 @@ type ApiUser = {
   role: "buyer" | "seller" | "distributor" | "admin"
   verified: boolean
   createdAt: string
+  verificationRequest?: VerificationRequest | null
 }
 
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<ApiUser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  const [successMessage, setSuccessMessage] = useState("")
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedRole, setSelectedRole] = useState("all")
   const [selectedVerification, setSelectedVerification] = useState("all")
+  const [reviewingUserId, setReviewingUserId] = useState<string | null>(null)
+  const [reviewNotesByUserId, setReviewNotesByUserId] = useState<Record<string, string>>({})
 
-  useEffect(() => {
-    let cancelled = false
+  const loadUsers = async (cancelled?: { current: boolean }) => {
+    try {
+      const response = await fetch("/api/admin/users", { credentials: "include", cache: "no-store" })
+      const payload = (await response.json()) as { users?: ApiUser[]; error?: string }
 
-    const loadUsers = async () => {
-      try {
-        const response = await fetch("/api/admin/users", { credentials: "include", cache: "no-store" })
-        const payload = (await response.json()) as { users?: ApiUser[]; error?: string }
+      if (!response.ok || !payload.users) {
+        throw new Error(payload.error || "Could not load users")
+      }
 
-        if (!response.ok || !payload.users) {
-          throw new Error(payload.error || "Could not load users")
-        }
-
-        if (!cancelled) setUsers(payload.users)
-      } catch (loadError) {
-        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load users")
-      } finally {
-        if (!cancelled) setLoading(false)
+      if (!cancelled?.current) {
+        setUsers(payload.users)
+      }
+    } catch (loadError) {
+      if (!cancelled?.current) {
+        setError(loadError instanceof Error ? loadError.message : "Could not load users")
+      }
+    } finally {
+      if (!cancelled?.current) {
+        setLoading(false)
       }
     }
+  }
 
-    loadUsers()
+  useEffect(() => {
+    const cancelled = { current: false }
+
+    void loadUsers(cancelled)
 
     return () => {
-      cancelled = true
+      cancelled.current = true
     }
   }, [])
+
+  const reviewRequest = async (user: ApiUser, decision: "approve" | "reject") => {
+    setReviewingUserId(user.id)
+    setError("")
+    setSuccessMessage("")
+    try {
+      const response = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          userId: user.id,
+          decision,
+          adminNotes: reviewNotesByUserId[user.id]?.trim() || undefined,
+        }),
+      })
+
+      const payload = (await response.json()) as {
+        error?: string
+        message?: string
+        activationNotification?: { sent: number; simulated: number; failed: number }
+      }
+      if (!response.ok) {
+        throw new Error(payload.error || "Could not review request")
+      }
+
+      await loadUsers()
+      if (decision === "approve") {
+        const notice = payload.activationNotification
+        const deliverySummary = notice
+          ? ` Notifications: sent ${notice.sent}, simulated ${notice.simulated}, failed ${notice.failed}.`
+          : ""
+        setSuccessMessage(
+          payload.message ||
+            `${user.name} approved successfully. Seller/Distributor dashboard is now active.${deliverySummary}`,
+        )
+      } else {
+        setSuccessMessage(
+          payload.message || `${user.name} rejected successfully. Account remains locked until re-submission.`,
+        )
+      }
+    } catch (reviewError) {
+      setError(reviewError instanceof Error ? reviewError.message : "Could not review request")
+    } finally {
+      setReviewingUserId(null)
+    }
+  }
 
   const roles = ["all", "buyer", "seller", "distributor", "admin"]
 
@@ -72,6 +146,7 @@ export default function AdminUsersPage() {
   )
 
   const roleCount = (role: ApiUser["role"]) => users.filter((user) => user.role === role).length
+  const pendingVerificationCount = users.filter((user) => user.verificationRequest?.status === "pending").length
 
   return (
     <div className="space-y-6">
@@ -81,8 +156,9 @@ export default function AdminUsersPage() {
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
+      {successMessage && <p className="text-sm text-green-700">{successMessage}</p>}
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-2">
@@ -123,6 +199,17 @@ export default function AdminUsersPage() {
               <div>
                 <p className="text-sm text-muted-foreground">Buyers</p>
                 <p className="text-2xl font-bold">{roleCount("buyer")}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2">
+              <Shield className="h-4 w-4 text-red-500" />
+              <div>
+                <p className="text-sm text-muted-foreground">Pending Reviews</p>
+                <p className="text-2xl font-bold">{pendingVerificationCount}</p>
               </div>
             </div>
           </CardContent>
@@ -192,10 +279,88 @@ export default function AdminUsersPage() {
                     </div>
                     <p className="text-sm text-muted-foreground">{user.email}</p>
                     <p className="text-xs text-muted-foreground">ID: {user.id}</p>
+                    {user.verificationRequest ? (
+                      <div className="rounded border bg-muted/30 p-2 text-xs space-y-1">
+                        <p>
+                          <span className="text-muted-foreground">Business:</span> {user.verificationRequest.businessName}
+                        </p>
+                        <p>
+                          <span className="text-muted-foreground">Location:</span>{" "}
+                          {user.verificationRequest.businessAddress}, {user.verificationRequest.city}, {user.verificationRequest.state} -{" "}
+                          {user.verificationRequest.pincode}
+                        </p>
+                        <p>
+                          <span className="text-muted-foreground">Contact:</span> {user.verificationRequest.contactPhone}
+                        </p>
+                        <p>
+                          <span className="text-muted-foreground">Proof:</span> {user.verificationRequest.idProofType} |{" "}
+                          {user.verificationRequest.idProofNumber}
+                        </p>
+                        <p>
+                          <span className="text-muted-foreground">Request Status:</span>{" "}
+                          <Badge
+                            variant={
+                              user.verificationRequest.status === "approved"
+                                ? "default"
+                                : user.verificationRequest.status === "rejected"
+                                  ? "destructive"
+                                  : "secondary"
+                            }
+                            className="ml-1 capitalize"
+                          >
+                            {user.verificationRequest.status}
+                          </Badge>
+                        </p>
+                        {user.verificationRequest.adminNotes ? (
+                          <p>
+                            <span className="text-muted-foreground">Admin Notes:</span> {user.verificationRequest.adminNotes}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
-                  <div className="text-right text-sm">
-                    <p className="text-muted-foreground">Joined</p>
-                    <p className="font-medium">{new Date(user.createdAt).toLocaleDateString()}</p>
+
+                  <div className="space-y-2 text-right text-sm min-w-[220px]">
+                    <div>
+                      <p className="text-muted-foreground">Joined</p>
+                      <p className="font-medium">{new Date(user.createdAt).toLocaleDateString()}</p>
+                    </div>
+
+                    {user.role !== "buyer" &&
+                    user.role !== "admin" &&
+                    !user.verified &&
+                    user.verificationRequest?.status === "pending" ? (
+                      <div className="space-y-2">
+                        <Input
+                          placeholder="Admin notes (optional)"
+                          value={reviewNotesByUserId[user.id] || ""}
+                          onChange={(event) =>
+                            setReviewNotesByUserId((current) => ({ ...current, [user.id]: event.target.value }))
+                          }
+                        />
+                        <div className="flex gap-2 justify-end">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={reviewingUserId === user.id}
+                            onClick={() => reviewRequest(user, "reject")}
+                          >
+                            {reviewingUserId === user.id ? "Processing..." : "Reject"}
+                          </Button>
+                          <Button size="sm" disabled={reviewingUserId === user.id} onClick={() => reviewRequest(user, "approve")}>
+                            {reviewingUserId === user.id ? "Processing..." : "Approve & Verify"}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : user.role !== "buyer" && user.role !== "admin" ? (
+                      <p className="text-xs text-muted-foreground">
+                        {user.verificationRequest?.status === "approved"
+                          ? "Already approved"
+                          : user.verificationRequest?.status === "rejected"
+                            ? "Rejected. User must re-submit verification for new review."
+                            : "No pending request"}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               ))}

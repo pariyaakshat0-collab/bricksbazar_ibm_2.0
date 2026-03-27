@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Package, Truck, CheckCircle, Clock, Search, Eye, Download, MessageCircle, Loader2, RefreshCw, Navigation } from "lucide-react"
+import { Package, Truck, CheckCircle, Clock, Search, Eye, Download, MessageCircle, Loader2, RefreshCw, Navigation, Star } from "lucide-react"
 
 type OrderStatus = "pending" | "confirmed" | "shipped" | "delivered" | "cancelled"
 type PaymentStatus = "pending" | "paid" | "failed"
@@ -29,14 +29,25 @@ interface Order {
   status: OrderStatus
   total: number
   items: OrderItem[]
+  sellerId: string
   sellerName: string
+  sellerVerified?: boolean
   estimatedDelivery: string
   trackingNumber?: string
   deliveryAddress?: string
   pickupAddress?: string
+  distributorId?: string
   distributorName?: string
+  distributorVerified?: boolean
   deliveryStatus?: "pickup_ready" | "in_transit" | "nearby" | "delivered" | "cancelled"
   vehicleType?: string
+  supplierRating?: {
+    supplierId: string
+    supplierName: string
+    rating: number
+    reviewText?: string
+    updatedAt: string
+  } | null
 }
 
 type Payment = {
@@ -56,6 +67,7 @@ type DeliveryTracking = {
   vehicleType: string
   driverName: string
   driverPhone: string
+  distributorVerified?: boolean
   pickupAddress: string
   deliveryAddress: string
   currentLat?: number
@@ -104,13 +116,50 @@ type DeliveryAlert = {
   message: string
 }
 
-function escapeHtml(input: string) {
+function toPdfSafeAscii(input: string) {
   return input
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;")
+    .replace(/[^\x20-\x7E]/g, "?")
+    .replace(/\\/g, "\\\\")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)")
+}
+
+function buildSimplePdf(lines: string[]) {
+  const clippedLines = lines.slice(0, 120).map(toPdfSafeAscii)
+  const streamOps = ["BT", "/F1 11 Tf", "14 TL", "50 790 Td"]
+  clippedLines.forEach((line, index) => {
+    if (index > 0) {
+      streamOps.push("T*")
+    }
+    streamOps.push(`(${line}) Tj`)
+  })
+  streamOps.push("ET")
+  const stream = `${streamOps.join("\n")}\n`
+  const streamLength = stream.length
+
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+    `<< /Length ${streamLength} >>\nstream\n${stream}endstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ]
+
+  let pdf = "%PDF-1.4\n"
+  const offsets: number[] = [0]
+  objects.forEach((object, index) => {
+    offsets.push(pdf.length)
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`
+  })
+
+  const xrefOffset = pdf.length
+  pdf += `xref\n0 ${objects.length + 1}\n`
+  pdf += "0000000000 65535 f \n"
+  offsets.slice(1).forEach((offset) => {
+    pdf += `${offset.toString().padStart(10, "0")} 00000 n \n`
+  })
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`
+  return new TextEncoder().encode(pdf)
 }
 
 function buildDeliveryTimeline(order: Order, trackingStatus?: DeliveryTracking["status"]) {
@@ -130,6 +179,11 @@ function buildDeliveryTimeline(order: Order, trackingStatus?: DeliveryTracking["
   ]
 }
 
+function renderVerifiedBadge(verified?: boolean, label = "Verified") {
+  if (!verified) return null
+  return <Badge className="h-5 bg-emerald-100 px-2 text-[10px] font-semibold text-emerald-800 hover:bg-emerald-100">{label}</Badge>
+}
+
 export default function OrdersPage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [orders, setOrders] = useState<Order[]>([])
@@ -147,6 +201,9 @@ export default function OrdersPage() {
   const [selectedProof, setSelectedProof] = useState<DeliveryProof | null>(null)
   const [selectedAlerts, setSelectedAlerts] = useState<DeliveryAlert[]>([])
   const [issuingOtp, setIssuingOtp] = useState(false)
+  const [supplierRatingValue, setSupplierRatingValue] = useState(5)
+  const [supplierReviewText, setSupplierReviewText] = useState("")
+  const [ratingSubmitting, setRatingSubmitting] = useState(false)
 
   const loadData = async (silent = false) => {
     if (!silent) {
@@ -217,6 +274,16 @@ export default function OrdersPage() {
 
   const selectedOrder = useMemo(() => orders.find((order) => order.id === selectedOrderId) || null, [orders, selectedOrderId])
   const selectedPayment = selectedOrder ? paymentByOrder.get(selectedOrder.id) : undefined
+
+  useEffect(() => {
+    if (!selectedOrder) {
+      setSupplierRatingValue(5)
+      setSupplierReviewText("")
+      return
+    }
+    setSupplierRatingValue(selectedOrder.supplierRating?.rating || 5)
+    setSupplierReviewText(selectedOrder.supplierRating?.reviewText || "")
+  }, [selectedOrder])
 
   useEffect(() => {
     if (!selectedOrderId) {
@@ -316,20 +383,27 @@ export default function OrdersPage() {
 
   const downloadInvoice = (order: Order) => {
     const payment = paymentByOrder.get(order.id)
-    const rows = order.items
-      .map(
+    const lines = [
+      "BricksBazar Invoice",
+      `Order: ${order.orderNumber}`,
+      `Date: ${new Date(order.date).toLocaleString()}`,
+      `Seller: ${order.sellerName}`,
+      `Status: ${order.status}`,
+      `Payment: ${payment?.status || "not available"} (${payment?.method || "N/A"})`,
+      "----------------------------------------",
+      "Items",
+      ...order.items.map(
         (item) =>
-          `<tr><td>${escapeHtml(item.productName)}</td><td>${item.quantity}</td><td>Rs. ${item.unitPrice.toLocaleString()}</td><td>Rs. ${item.lineTotal.toLocaleString()}</td></tr>`,
-      )
-      .join("")
-
-    const invoiceHtml = `<!doctype html><html><head><meta charset="utf-8" /><title>Invoice ${escapeHtml(order.orderNumber)}</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111}h1{margin:0 0 8px}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #ddd;padding:8px;text-align:left}th{background:#f5f5f5}.meta{margin:4px 0}.total{margin-top:16px;font-size:18px;font-weight:bold}</style></head><body><h1>BricksBazar Invoice</h1><p class="meta"><strong>Order:</strong> ${escapeHtml(order.orderNumber)}</p><p class="meta"><strong>Date:</strong> ${new Date(order.date).toLocaleString()}</p><p class="meta"><strong>Seller:</strong> ${escapeHtml(order.sellerName)}</p><p class="meta"><strong>Status:</strong> ${escapeHtml(order.status)}</p><p class="meta"><strong>Payment:</strong> ${escapeHtml(payment?.status || "not available")} (${escapeHtml(payment?.method || "N/A")})</p><table><thead><tr><th>Item</th><th>Qty</th><th>Unit Price</th><th>Line Total</th></tr></thead><tbody>${rows}</tbody></table><p class="total">Grand Total: Rs. ${order.total.toLocaleString()}</p></body></html>`
-
-    const blob = new Blob([invoiceHtml], { type: "text/html;charset=utf-8" })
+          `${item.productName} | Qty ${item.quantity} | Unit Rs ${item.unitPrice.toLocaleString()} | Total Rs ${item.lineTotal.toLocaleString()}`,
+      ),
+      "----------------------------------------",
+      `Grand Total: Rs. ${order.total.toLocaleString()}`,
+    ]
+    const blob = new Blob([buildSimplePdf(lines)], { type: "application/pdf" })
     const url = URL.createObjectURL(blob)
     const link = document.createElement("a")
     link.href = url
-    link.download = `${order.orderNumber}-invoice.html`
+    link.download = `${order.orderNumber}-invoice.pdf`
     link.click()
     URL.revokeObjectURL(url)
   }
@@ -392,6 +466,55 @@ export default function OrdersPage() {
     }
   }
 
+  const submitSupplierRating = async () => {
+    if (!selectedOrder || selectedOrder.status !== "delivered") return
+    setRatingSubmitting(true)
+    setTrackingError("")
+    setTrackingMessage("")
+    try {
+      const response = await fetch(`/api/orders/${selectedOrder.id}/rating`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          supplierId: selectedOrder.sellerId !== "multi-seller" ? selectedOrder.sellerId : undefined,
+          rating: supplierRatingValue,
+          reviewText: supplierReviewText.trim() || undefined,
+        }),
+      })
+
+      const payload = (await response.json()) as {
+        rating?: { rating: number; reviewText?: string; supplierId: string; supplierName: string; updatedAt: string }
+        error?: string
+      }
+      if (!response.ok || !payload.rating) {
+        throw new Error(payload.error || "Could not submit supplier rating")
+      }
+
+      setOrders((current) =>
+        current.map((order) =>
+          order.id === selectedOrder.id
+            ? {
+                ...order,
+                supplierRating: {
+                  supplierId: payload.rating!.supplierId,
+                  supplierName: payload.rating!.supplierName,
+                  rating: payload.rating!.rating,
+                  reviewText: payload.rating!.reviewText,
+                  updatedAt: payload.rating!.updatedAt,
+                },
+              }
+            : order,
+        ),
+      )
+      setTrackingMessage("Supplier rating submitted successfully. Thanks for your feedback.")
+    } catch (ratingError) {
+      setTrackingError(ratingError instanceof Error ? ratingError.message : "Could not submit supplier rating")
+    } finally {
+      setRatingSubmitting(false)
+    }
+  }
+
   const getAlertVariant = (severity: DeliveryAlertSeverity) => {
     if (severity === "critical") return "destructive" as const
     if (severity === "warning") return "secondary" as const
@@ -408,10 +531,14 @@ export default function OrdersPage() {
             <div>
               <h3 className="font-semibold text-lg">{order.orderNumber}</h3>
               <p className="text-sm text-muted-foreground">Ordered on {new Date(order.date).toLocaleDateString()}</p>
-              <p className="text-sm text-muted-foreground">from {order.sellerName}</p>
-              <p className="text-sm text-muted-foreground">
-                Distributor: {order.distributorName || "Pending assignment"}
-              </p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm text-muted-foreground">from {order.sellerName}</p>
+                {renderVerifiedBadge(order.sellerVerified, "Verified Seller")}
+              </div>
+              <div className="flex items-center gap-2">
+                <p className="text-sm text-muted-foreground">Distributor: {order.distributorName || "Pending assignment"}</p>
+                {renderVerifiedBadge(order.distributorVerified, "Verified Distributor")}
+              </div>
             </div>
             <Badge variant={getStatusColor(order.status)} className="flex items-center gap-1">
               {getStatusIcon(order.status)}
@@ -559,7 +686,10 @@ export default function OrdersPage() {
                 </div>
                 <div>
                   <p className="text-muted-foreground">Seller</p>
-                  <p className="font-medium">{selectedOrder.sellerName}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium">{selectedOrder.sellerName}</p>
+                    {renderVerifiedBadge(selectedOrder.sellerVerified, "Verified Seller")}
+                  </div>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Estimated Delivery</p>
@@ -578,9 +708,12 @@ export default function OrdersPage() {
                 </div>
                 <div className="p-3 border rounded-lg">
                   <p className="text-muted-foreground mb-1">Distributor</p>
-                  <p className="font-medium">
-                    {selectedOrder.distributorName || "Not assigned"} | {selectedOrder.vehicleType || "Vehicle pending"}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium">
+                      {selectedOrder.distributorName || "Not assigned"} | {selectedOrder.vehicleType || "Vehicle pending"}
+                    </p>
+                    {renderVerifiedBadge(selectedOrder.distributorVerified, "Verified Distributor")}
+                  </div>
                 </div>
               </div>
 
@@ -616,6 +749,47 @@ export default function OrdersPage() {
                 </div>
               </div>
 
+              {selectedOrder.status === "delivered" ? (
+                <div className="space-y-3 rounded-lg border p-3">
+                  <p className="font-medium">Rate Supplier ({selectedOrder.sellerName})</p>
+                  <div className="flex items-center gap-2">
+                    {[1, 2, 3, 4, 5].map((value) => (
+                      <Button
+                        key={value}
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="px-1"
+                        onClick={() => setSupplierRatingValue(value)}
+                      >
+                        <Star
+                          className={`h-5 w-5 ${
+                            supplierRatingValue >= value ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground"
+                          }`}
+                        />
+                      </Button>
+                    ))}
+                    <span className="text-sm text-muted-foreground">{supplierRatingValue}/5</span>
+                  </div>
+                  <Input
+                    value={supplierReviewText}
+                    onChange={(event) => setSupplierReviewText(event.target.value)}
+                    placeholder="Write feedback (optional)"
+                    maxLength={500}
+                  />
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs text-muted-foreground">
+                      {selectedOrder.supplierRating
+                        ? `Last updated: ${new Date(selectedOrder.supplierRating.updatedAt).toLocaleString()}`
+                        : "Your rating improves fair supplier recommendations."}
+                    </p>
+                    <Button size="sm" onClick={submitSupplierRating} disabled={ratingSubmitting}>
+                      {ratingSubmitting ? "Saving..." : selectedOrder.supplierRating ? "Update Rating" : "Submit Rating"}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
               <div className="p-3 border rounded-lg space-y-3">
                 <div className="flex items-center justify-between">
                   <p className="font-medium">Live Delivery Tracking</p>
@@ -646,7 +820,7 @@ export default function OrdersPage() {
                     {selectedOrder.status === "cancelled" ? (
                       <p className="text-xs text-destructive">This order was cancelled, live movement is stopped.</p>
                     ) : null}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-sm">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2 text-sm">
                       <div className="p-2 border rounded">
                         <p className="text-muted-foreground">Status</p>
                         <p className="font-medium capitalize">{selectedTracking.status.replace("_", " ")}</p>
@@ -658,6 +832,13 @@ export default function OrdersPage() {
                       <div className="p-2 border rounded">
                         <p className="text-muted-foreground">Driver</p>
                         <p className="font-medium">{selectedTracking.driverName || "Not assigned"}</p>
+                      </div>
+                      <div className="p-2 border rounded">
+                        <p className="text-muted-foreground">Distributor</p>
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium">{selectedTracking.distributorName}</p>
+                          {renderVerifiedBadge(selectedTracking.distributorVerified, "Verified")}
+                        </div>
                       </div>
                     </div>
                     <div className="text-sm space-y-1">

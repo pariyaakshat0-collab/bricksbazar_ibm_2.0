@@ -64,14 +64,23 @@ async function assertOk(step, result) {
   }
 }
 
+function assertCondition(condition, message) {
+  if (!condition) {
+    throw new Error(message)
+  }
+}
+
 async function main() {
   const now = Date.now()
   const buyerEmail = `e2e.buyer.${now}@bricksbazar.test`
   const distributorEmail = `e2e.distributor.${now}@bricksbazar.test`
   const password = "Testpass123"
+  const adminEmail = (process.env.E2E_ADMIN_EMAIL || "").trim()
+  const adminPassword = (process.env.E2E_ADMIN_PASSWORD || "").trim()
 
   const buyer = createSession("buyer")
   const distributor = createSession("distributor")
+  const admin = createSession("admin")
 
   const summary = {
     baseUrl,
@@ -81,9 +90,15 @@ async function main() {
     orderNumber: "",
     deliveryId: "",
     paymentMode: "",
-    gpsPushed: false,
+    locationUpdateMode: "",
+    locationEventsPushed: 0,
+    otpIssued: false,
+    otpVerified: false,
+    proofStored: false,
+    alertsBeforeDelivery: 0,
     buyerTrackingStatus: "",
     buyerTrackingAddress: "",
+    buyerTrackingLocations: 0,
   }
 
   const registerBuyer = await apiRequest(buyer, "/api/auth/register", {
@@ -97,6 +112,15 @@ async function main() {
   })
   await assertOk("buyer register", registerBuyer)
 
+  const buyerLogin = await apiRequest(buyer, "/api/auth/login", {
+    method: "POST",
+    json: {
+      email: buyerEmail,
+      password,
+    },
+  })
+  await assertOk("buyer login", buyerLogin)
+
   const registerDistributor = await apiRequest(distributor, "/api/auth/register", {
     method: "POST",
     json: {
@@ -104,9 +128,63 @@ async function main() {
       email: distributorEmail,
       password,
       role: "distributor",
+      verificationProfile: {
+        businessName: "E2E Ground Logistics",
+        contactPhone: "9898989898",
+        businessAddress: "Ring Road Logistics Hub, Indore",
+        city: "Indore",
+        state: "Madhya Pradesh",
+        pincode: "452010",
+        gstNumber: "23ABCDE1234F1Z5",
+        idProofType: "GST Certificate",
+        idProofNumber: "GST-E2E-1001",
+      },
     },
   })
-  await assertOk("distributor register", registerDistributor)
+  if (registerDistributor.status !== 202) {
+    await assertOk("distributor register", registerDistributor)
+  }
+
+  const distributorLogin = await apiRequest(distributor, "/api/auth/login", {
+    method: "POST",
+    json: {
+      email: distributorEmail,
+      password,
+    },
+  })
+
+  if (!distributorLogin.ok && distributorLogin.status === 403 && adminEmail && adminPassword) {
+    const adminLogin = await apiRequest(admin, "/api/auth/login", {
+      method: "POST",
+      json: { email: adminEmail, password: adminPassword },
+    })
+    await assertOk("admin login for verification review", adminLogin)
+
+    const usersResponse = await apiRequest(admin, "/api/admin/users")
+    await assertOk("admin users fetch", usersResponse)
+    const distributorUser = (usersResponse.data?.users || []).find((user) => user.email === distributorEmail)
+    if (!distributorUser) {
+      throw new Error("registered distributor not found in admin users list")
+    }
+
+    const approveResponse = await apiRequest(admin, "/api/admin/users", {
+      method: "PATCH",
+      json: {
+        userId: distributorUser.id,
+        decision: "approve",
+        adminNotes: "Approved in automated E2E flow",
+      },
+    })
+    await assertOk("admin approve distributor", approveResponse)
+
+    const distributorLoginRetry = await apiRequest(distributor, "/api/auth/login", {
+      method: "POST",
+      json: { email: distributorEmail, password },
+    })
+    await assertOk("distributor login after approval", distributorLoginRetry)
+  } else if (!distributorLogin.ok) {
+    throw new Error(`distributor login failed (${distributorLogin.status}): ${JSON.stringify(distributorLogin.data)}`)
+  }
 
   const productsResult = await apiRequest(buyer, "/api/products")
   await assertOk("products fetch", productsResult)
@@ -214,14 +292,101 @@ async function main() {
       },
     })
     await assertOk("driver gps push", gpsPush)
-    summary.gpsPushed = true
+
+    const secondGpsPush = await apiRequest(null, "/api/driver/location", {
+      method: "POST",
+      headers: { "x-driver-api-key": driverApiKey },
+      json: {
+        deliveryId: summary.deliveryId,
+        lat: 22.7283,
+        lng: 75.8664,
+        address: "Scheme 140, Indore, Madhya Pradesh",
+        speedKph: 22,
+        heading: 260,
+        status: "nearby",
+      },
+    })
+    await assertOk("driver gps push nearby", secondGpsPush)
+    summary.locationUpdateMode = "driver_api_key"
+    summary.locationEventsPushed = 2
+  } else {
+    const locationPush = await apiRequest(distributor, `/api/deliveries/${summary.deliveryId}/location`, {
+      method: "POST",
+      json: {
+        lat: 22.7196,
+        lng: 75.8577,
+        address: "AB Road, Indore, Madhya Pradesh",
+        speedKph: 30,
+        heading: 80,
+        status: "in_transit",
+      },
+    })
+    await assertOk("session location push", locationPush)
+
+    const secondLocationPush = await apiRequest(distributor, `/api/deliveries/${summary.deliveryId}/location`, {
+      method: "POST",
+      json: {
+        lat: 22.7283,
+        lng: 75.8664,
+        address: "Scheme 140, Indore, Madhya Pradesh",
+        speedKph: 16,
+        heading: 250,
+        status: "nearby",
+      },
+    })
+    await assertOk("session location push nearby", secondLocationPush)
+    summary.locationUpdateMode = "distributor_session"
+    summary.locationEventsPushed = 2
   }
 
-  const trackingAfterGps = await apiRequest(buyer, `/api/orders/${summary.orderId}/tracking`)
-  await assertOk("buyer tracking refresh", trackingAfterGps)
+  const issueOtp = await apiRequest(buyer, `/api/deliveries/${summary.deliveryId}/otp`, {
+    method: "POST",
+    json: { expiresInMinutes: 30 },
+  })
+  await assertOk("buyer issue otp", issueOtp)
+  const issuedOtpCode = issueOtp.data?.otp?.otpCode || ""
+  assertCondition(/^\d{6}$/.test(issuedOtpCode), "OTP code missing for buyer")
+  summary.otpIssued = true
 
-  summary.buyerTrackingStatus = trackingAfterGps.data?.delivery?.status || "unknown"
-  summary.buyerTrackingAddress = trackingAfterGps.data?.delivery?.currentAddress || "not_shared_yet"
+  const distributorOtpRead = await apiRequest(distributor, `/api/deliveries/${summary.deliveryId}/otp`)
+  await assertOk("distributor otp read", distributorOtpRead)
+  assertCondition(distributorOtpRead.data?.otp?.otpCode === null, "Distributor should not receive OTP code")
+
+  const alertsBeforeDelivery = await apiRequest(distributor, `/api/deliveries/${summary.deliveryId}/alerts`)
+  await assertOk("alerts before delivery", alertsBeforeDelivery)
+  const beforeAlerts = Array.isArray(alertsBeforeDelivery.data?.alerts) ? alertsBeforeDelivery.data.alerts : []
+  summary.alertsBeforeDelivery = beforeAlerts.length
+
+  const delivered = await apiRequest(distributor, `/api/deliveries/${summary.deliveryId}`, {
+    method: "PATCH",
+    json: {
+      status: "delivered",
+      otpCode: issuedOtpCode,
+      podNote: "Package received in good condition.",
+      receivedBy: "Site Supervisor",
+      podImageUrl: "https://example.com/e2e/pod-proof.jpg",
+    },
+  })
+  await assertOk("mark delivered with otp", delivered)
+  summary.otpVerified = delivered.data?.proof?.otpVerified === true
+
+  const proofResult = await apiRequest(buyer, `/api/deliveries/${summary.deliveryId}/proof`)
+  await assertOk("delivery proof fetch", proofResult)
+  assertCondition(proofResult.data?.proof?.otpVerified === true, "Delivery proof missing OTP verification")
+  summary.proofStored = Boolean(proofResult.data?.proof?.id)
+
+  const trackingAfterCompletion = await apiRequest(buyer, `/api/orders/${summary.orderId}/tracking`)
+  await assertOk("buyer tracking refresh", trackingAfterCompletion)
+  assertCondition(
+    trackingAfterCompletion.data?.delivery?.status === "delivered",
+    `Expected delivered status, got ${trackingAfterCompletion.data?.delivery?.status || "unknown"}`,
+  )
+
+  summary.buyerTrackingStatus = trackingAfterCompletion.data?.delivery?.status || "unknown"
+  summary.buyerTrackingAddress = trackingAfterCompletion.data?.delivery?.currentAddress || "not_shared_yet"
+  summary.buyerTrackingLocations = Array.isArray(trackingAfterCompletion.data?.locations)
+    ? trackingAfterCompletion.data.locations.length
+    : 0
 
   console.log(JSON.stringify({ ok: true, summary }, null, 2))
 }

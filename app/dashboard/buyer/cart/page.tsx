@@ -24,7 +24,9 @@ type ApiProduct = {
   stock: number
   status: "active" | "out_of_stock"
   image: string
+  sellerId: string
   sellerName: string
+  sellerVerified?: boolean
 }
 
 type DistributorLocation = {
@@ -185,9 +187,14 @@ export default function CartPage() {
   )
 
   const sellerOptions = useMemo(() => {
-    return Array.from(
-      new Set(cartItems.map((item) => item.supplier.trim()).filter((supplier) => supplier.length > 0)),
-    )
+    const byName = new Map<string, boolean>()
+    cartItems.forEach((item) => {
+      const supplier = item.supplier.trim()
+      if (!supplier) return
+      const existing = byName.get(supplier) === true
+      byName.set(supplier, existing || item.supplierVerified === true)
+    })
+    return Array.from(byName.entries()).map(([name, verified]) => ({ name, verified }))
   }, [cartItems])
 
   const updateQuantity = (productId: string, newQuantity: number) => {
@@ -241,6 +248,8 @@ export default function CartPage() {
         price: latest.price,
         unit: latest.unit,
         supplier: latest.sellerName,
+        supplierId: latest.sellerId,
+        supplierVerified: latest.sellerVerified === true,
         image: latest.image || "/placeholder.svg",
         inStock: latest.stock > 0 && latest.status !== "out_of_stock",
       }
@@ -550,7 +559,14 @@ export default function CartPage() {
                         <div>
                           <h3 className="font-semibold text-lg">{item.name}</h3>
                           <p className="text-sm text-muted-foreground">{item.category}</p>
-                          <p className="text-sm text-muted-foreground">by {item.supplier}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm text-muted-foreground">by {item.supplier}</p>
+                            {item.supplierVerified ? (
+                              <Badge className="h-5 bg-emerald-100 px-2 text-[10px] font-semibold text-emerald-800 hover:bg-emerald-100">
+                                Verified Seller
+                              </Badge>
+                            ) : null}
+                          </div>
                         </div>
                         <Button
                           variant="ghost"
@@ -718,8 +734,9 @@ export default function CartPage() {
                 {sellerOptions.length > 0 ? (
                   <div className="flex flex-wrap gap-2">
                     {sellerOptions.map((seller) => (
-                      <Badge key={seller} variant="outline">
-                        {seller}
+                      <Badge key={seller.name} variant={seller.verified ? "default" : "outline"}>
+                        {seller.name}
+                        {seller.verified ? " | Verified" : ""}
                       </Badge>
                     ))}
                   </div>

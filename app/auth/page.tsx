@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { LoginForm } from "@/components/auth/login-form"
 import { RegisterForm } from "@/components/auth/register-form"
@@ -10,9 +10,23 @@ import { cn } from "@/lib/utils"
 
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true)
-  const { user } = useAuth()
+  const { user, logout } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
+  const switchAccount = searchParams.get("switch") === "1"
+  const switchHandledRef = useRef(false)
+
+  useEffect(() => {
+    if (!switchAccount || switchHandledRef.current) return
+    switchHandledRef.current = true
+
+    if (user) {
+      void logout()
+      return
+    }
+
+    router.replace("/auth")
+  }, [switchAccount, user, logout, router])
 
   useEffect(() => {
     if (user) {

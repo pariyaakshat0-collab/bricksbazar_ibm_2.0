@@ -38,11 +38,13 @@ function resolveWebhookPayload(payload: PhonePeWebhookPayload) {
 
 export async function POST(request: Request) {
   const token = process.env.PHONEPE_WEBHOOK_TOKEN?.trim() || ""
-  if (token) {
-    const incoming = request.headers.get("x-callback-token")?.trim() || ""
-    if (incoming !== token) {
-      return NextResponse.json({ error: "Invalid webhook token" }, { status: 401 })
-    }
+  if (!token) {
+    return NextResponse.json({ error: "PhonePe webhook token is not configured" }, { status: 503 })
+  }
+
+  const incoming = request.headers.get("x-callback-token")?.trim() || ""
+  if (incoming !== token) {
+    return NextResponse.json({ error: "Invalid webhook token" }, { status: 401 })
   }
 
   const payload = (await request.json().catch(() => ({}))) as PhonePeWebhookPayload

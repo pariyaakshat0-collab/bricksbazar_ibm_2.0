@@ -18,14 +18,19 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
+  const [infoMessage, setInfoMessage] = useState("")
   const { login, loading } = useAuth()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
+    setInfoMessage("")
 
     try {
-      await login(email, password)
+      const result = await login(email, password)
+      if (result.message) {
+        setInfoMessage(result.message)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Invalid credentials. Please try again.")
     }
@@ -62,6 +67,7 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
             />
           </div>
           {error && <div className="text-sm text-destructive text-center">{error}</div>}
+          {infoMessage && <div className="text-sm text-green-700 text-center">{infoMessage}</div>}
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? (
               <>

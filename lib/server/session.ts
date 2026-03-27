@@ -18,6 +18,7 @@ export type SessionPayload = {
   email: string
   name: string
   role: UserRole
+  verified: boolean
 }
 
 export async function createSessionToken(payload: SessionPayload) {

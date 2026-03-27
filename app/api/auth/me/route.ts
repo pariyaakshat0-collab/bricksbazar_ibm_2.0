@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server"
 import { cookies } from "next/headers"
-import { findUserById } from "@/lib/server/user-store"
-import { SESSION_COOKIE_NAME, verifySessionToken } from "@/lib/server/session"
-import { getExpiredSessionCookieOptions } from "@/lib/server/auth-cookie"
+import { findUserById, syncOperatorVerificationState } from "@/lib/server/user-store"
+import { createSessionToken, SESSION_COOKIE_NAME, verifySessionToken } from "@/lib/server/session"
+import { getExpiredSessionCookieOptions, getSessionCookieOptions } from "@/lib/server/auth-cookie"
 
 function unauthorizedResponse(clearCookie = false) {
   const response = NextResponse.json(
@@ -37,19 +37,52 @@ export async function GET() {
     return unauthorizedResponse(true)
   }
 
-  return NextResponse.json(
+  let effectiveUser = user
+  if (user.role === "seller" || user.role === "distributor") {
+    const synced = await syncOperatorVerificationState(user.id)
+    if (!synced.user) {
+      return unauthorizedResponse(true)
+    }
+    effectiveUser = synced.user
+  }
+
+  const response = NextResponse.json(
     {
       user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        avatar: user.avatar,
-        verified: user.verified,
-        createdAt: user.createdAt,
+        id: effectiveUser.id,
+        email: effectiveUser.email,
+        name: effectiveUser.name,
+        role: effectiveUser.role,
+        avatar: effectiveUser.avatar,
+        verified: effectiveUser.verified,
+        createdAt: effectiveUser.createdAt,
       },
       authenticated: true,
     },
     { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } },
   )
+
+  const tokenOutdated =
+    payload.userId !== effectiveUser.id ||
+    payload.email !== effectiveUser.email ||
+    payload.name !== effectiveUser.name ||
+    payload.role !== effectiveUser.role ||
+    payload.verified !== effectiveUser.verified
+
+  if (tokenOutdated) {
+    const refreshedToken = await createSessionToken({
+      userId: effectiveUser.id,
+      email: effectiveUser.email,
+      name: effectiveUser.name,
+      role: effectiveUser.role,
+      verified: effectiveUser.verified,
+    })
+    response.cookies.set({
+      name: SESSION_COOKIE_NAME,
+      value: refreshedToken,
+      ...getSessionCookieOptions(),
+    })
+  }
+
+  return response
 }

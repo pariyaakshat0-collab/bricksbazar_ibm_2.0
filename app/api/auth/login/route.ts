@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import bcrypt from "bcryptjs"
-import { findUserByIdentifier } from "@/lib/server/user-store"
+import { findUserByIdentifier, syncOperatorVerificationState } from "@/lib/server/user-store"
 import { createSessionToken, SESSION_COOKIE_NAME } from "@/lib/server/session"
 import { getSessionCookieOptions } from "@/lib/server/auth-cookie"
 
@@ -107,26 +107,48 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid credentials" }, { status: 401 })
     }
 
+    let effectiveUser = user
+    let verificationRequest: Awaited<ReturnType<typeof syncOperatorVerificationState>>["request"] = null
+    if (user.role === "seller" || user.role === "distributor") {
+      const synced = await syncOperatorVerificationState(user.id)
+      if (synced.user) {
+        effectiveUser = synced.user
+      }
+      verificationRequest = synced.request
+    }
+
+    const isUnverifiedOperator =
+      (effectiveUser.role === "seller" || effectiveUser.role === "distributor") && !effectiveUser.verified
+
     clearFailures(clientId)
 
     const token = await createSessionToken({
-      userId: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
+      userId: effectiveUser.id,
+      email: effectiveUser.email,
+      name: effectiveUser.name,
+      role: effectiveUser.role,
+      verified: effectiveUser.verified,
     })
 
     const response = NextResponse.json(
       {
         user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
-          avatar: user.avatar,
-          verified: user.verified,
-          createdAt: user.createdAt,
+          id: effectiveUser.id,
+          email: effectiveUser.email,
+          name: effectiveUser.name,
+          role: effectiveUser.role,
+          avatar: effectiveUser.avatar,
+          verified: effectiveUser.verified,
+          createdAt: effectiveUser.createdAt,
         },
+        requiresApproval: isUnverifiedOperator,
+        message: isUnverifiedOperator
+          ? verificationRequest?.status === "rejected"
+            ? "Your verification request was rejected. Please contact admin to re-submit details."
+            : "Your dashboard is locked for verification and should be activated in 1-2 working days."
+          : effectiveUser.role === "seller" || effectiveUser.role === "distributor"
+            ? "Your account is verified and dashboard is active. You can continue now."
+            : undefined,
       },
       { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } },
     )

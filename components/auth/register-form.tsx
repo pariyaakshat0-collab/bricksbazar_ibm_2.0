@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { useAuth, type RegistrationRole } from "@/lib/auth"
+import { useAuth, type OperatorVerificationProfile, type RegistrationRole } from "@/lib/auth"
 import { Loader2 } from "lucide-react"
 
 interface RegisterFormProps {
@@ -21,14 +21,78 @@ export function RegisterForm({ onToggleMode }: RegisterFormProps) {
   const [name, setName] = useState("")
   const [role, setRole] = useState<RegistrationRole>("buyer")
   const [error, setError] = useState("")
+  const [successMessage, setSuccessMessage] = useState("")
+  const [verificationProfile, setVerificationProfile] = useState<OperatorVerificationProfile>({
+    businessName: "",
+    contactPhone: "",
+    businessAddress: "",
+    city: "",
+    state: "Madhya Pradesh",
+    pincode: "",
+    gstNumber: "",
+    idProofType: "GST Certificate",
+    idProofNumber: "",
+  })
   const { register, loading } = useAuth()
+
+  const isOperator = role === "seller" || role === "distributor"
+
+  const updateProfile = (key: keyof OperatorVerificationProfile, value: string) => {
+    setVerificationProfile((current) => ({ ...current, [key]: value }))
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
+    setSuccessMessage("")
+
+    if (isOperator) {
+      if (!verificationProfile.businessName.trim() || !verificationProfile.businessAddress.trim()) {
+        setError("Business name and address are required for seller/distributor verification.")
+        return
+      }
+      if (!verificationProfile.contactPhone.trim() || !verificationProfile.idProofNumber.trim()) {
+        setError("Contact phone and ID proof details are required for verification.")
+        return
+      }
+      if (verificationProfile.businessAddress.trim().length < 5) {
+        setError("Business address must be at least 5 characters.")
+        return
+      }
+      if (!/^[0-9+\-\s()]{8,20}$/.test(verificationProfile.contactPhone.trim())) {
+        setError("Enter a valid contact phone number.")
+        return
+      }
+      if (!/^\d{6}$/.test(verificationProfile.pincode.trim())) {
+        setError("Pincode must be 6 digits.")
+        return
+      }
+    }
 
     try {
-      await register(email, password, name, role)
+      const result = await register(
+        email,
+        password,
+        name,
+        role,
+        isOperator
+          ? {
+              ...verificationProfile,
+              businessName: verificationProfile.businessName.trim(),
+              contactPhone: verificationProfile.contactPhone.trim(),
+              businessAddress: verificationProfile.businessAddress.trim(),
+              city: verificationProfile.city.trim(),
+              state: verificationProfile.state.trim(),
+              pincode: verificationProfile.pincode.trim(),
+              gstNumber: verificationProfile.gstNumber?.trim() || undefined,
+              idProofType: verificationProfile.idProofType.trim(),
+              idProofNumber: verificationProfile.idProofNumber.trim(),
+            }
+          : undefined,
+      )
+      if (result.requiresApproval) {
+        setSuccessMessage(result.message || "Verification request submitted. Please wait for admin approval.")
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed. Please try again.")
     }
@@ -88,7 +152,90 @@ export function RegisterForm({ onToggleMode }: RegisterFormProps) {
               </SelectContent>
             </Select>
           </div>
+          {isOperator ? (
+            <div className="space-y-3 rounded-md border p-3">
+              <p className="text-sm font-medium">Seller/Distributor Verification Details</p>
+              <div className="space-y-2">
+                <Label htmlFor="businessName">Business Name</Label>
+                <Input
+                  id="businessName"
+                  value={verificationProfile.businessName}
+                  onChange={(e) => updateProfile("businessName", e.target.value)}
+                  required={isOperator}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="contactPhone">Contact Phone</Label>
+                <Input
+                  id="contactPhone"
+                  value={verificationProfile.contactPhone}
+                  onChange={(e) => updateProfile("contactPhone", e.target.value)}
+                  required={isOperator}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="businessAddress">Business Address</Label>
+                <Input
+                  id="businessAddress"
+                  value={verificationProfile.businessAddress}
+                  onChange={(e) => updateProfile("businessAddress", e.target.value)}
+                  required={isOperator}
+                />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <Input
+                  placeholder="City"
+                  value={verificationProfile.city}
+                  onChange={(e) => updateProfile("city", e.target.value)}
+                  required={isOperator}
+                />
+                <Input
+                  placeholder="State"
+                  value={verificationProfile.state}
+                  onChange={(e) => updateProfile("state", e.target.value)}
+                  required={isOperator}
+                />
+                <Input
+                  placeholder="Pincode"
+                  value={verificationProfile.pincode}
+                  onChange={(e) => updateProfile("pincode", e.target.value)}
+                  required={isOperator}
+                />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <Input
+                  placeholder="GST Number (optional)"
+                  value={verificationProfile.gstNumber || ""}
+                  onChange={(e) => updateProfile("gstNumber", e.target.value)}
+                />
+                <Select value={verificationProfile.idProofType} onValueChange={(value) => updateProfile("idProofType", value)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="ID Proof Type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="GST Certificate">GST Certificate</SelectItem>
+                    <SelectItem value="Shop License">Shop License</SelectItem>
+                    <SelectItem value="Aadhaar">Aadhaar</SelectItem>
+                    <SelectItem value="PAN">PAN</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="idProofNumber">ID Proof Number</Label>
+                <Input
+                  id="idProofNumber"
+                  value={verificationProfile.idProofNumber}
+                  onChange={(e) => updateProfile("idProofNumber", e.target.value)}
+                  required={isOperator}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Seller/Distributor account will be activated only after admin approval and ground-level verification.
+              </p>
+            </div>
+          ) : null}
           {error && <div className="text-sm text-destructive text-center">{error}</div>}
+          {successMessage && <div className="text-sm text-green-700 text-center">{successMessage}</div>}
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? (
               <>

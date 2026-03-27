@@ -7,6 +7,18 @@ import { createContext, useContext, useEffect, useState } from "react"
 export type UserRole = "buyer" | "seller" | "distributor" | "admin"
 export type RegistrationRole = Exclude<UserRole, "admin">
 
+export type OperatorVerificationProfile = {
+  businessName: string
+  contactPhone: string
+  businessAddress: string
+  city: string
+  state: string
+  pincode: string
+  gstNumber?: string
+  idProofType: string
+  idProofNumber: string
+}
+
 export interface User {
   id: string
   email: string
@@ -22,8 +34,14 @@ type MeResponse = { user: ApiUser | null; authenticated?: boolean }
 
 interface AuthContextType {
   user: User | null
-  login: (email: string, password: string) => Promise<void>
-  register: (email: string, password: string, name: string, role: RegistrationRole) => Promise<void>
+  login: (email: string, password: string) => Promise<{ requiresApproval?: boolean; message?: string }>
+  register: (
+    email: string,
+    password: string,
+    name: string,
+    role: RegistrationRole,
+    verificationProfile?: OperatorVerificationProfile,
+  ) => Promise<{ requiresApproval: boolean; message?: string }>
   logout: () => Promise<void>
   loading: boolean
 }
@@ -95,19 +113,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         body: JSON.stringify({ email: normalizedEmail, password }),
       })
 
-      const data = (await response.json()) as { user?: ApiUser; error?: string }
+      const data = (await response.json()) as {
+        user?: ApiUser
+        error?: string
+        requiresApproval?: boolean
+        message?: string
+      }
 
       if (!response.ok || !data.user) {
         throw new Error(data.error || "Login failed")
       }
 
       setUser(mapApiUser(data.user))
+      return {
+        requiresApproval: data.requiresApproval,
+        message: data.message,
+      }
     } finally {
       setLoading(false)
     }
   }
 
-  const register = async (email: string, password: string, name: string, role: RegistrationRole) => {
+  const register = async (
+    email: string,
+    password: string,
+    name: string,
+    role: RegistrationRole,
+    verificationProfile?: OperatorVerificationProfile,
+  ) => {
     setLoading(true)
     try {
       const normalizedEmail = email.trim().toLowerCase()
@@ -116,16 +149,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ email: normalizedEmail, password, name: normalizedName, role }),
+        body: JSON.stringify({
+          email: normalizedEmail,
+          password,
+          name: normalizedName,
+          role,
+          verificationProfile,
+        }),
       })
 
-      const data = (await response.json()) as { user?: ApiUser; error?: string }
+      const data = (await response.json()) as {
+        user?: ApiUser
+        error?: string
+        requiresApproval?: boolean
+        message?: string
+      }
 
-      if (!response.ok || !data.user) {
+      if (!response.ok) {
         throw new Error(data.error || "Registration failed")
       }
 
+      if (data.requiresApproval) {
+        if (!data.user) {
+          throw new Error(data.error || "Registration completed but user session was not created")
+        }
+        setUser(mapApiUser(data.user))
+        return {
+          requiresApproval: true,
+          message: data.message || "Registration submitted for admin approval.",
+        }
+      }
+
+      if (!data.user) {
+        throw new Error("Registration response missing user profile")
+      }
+
       setUser(mapApiUser(data.user))
+      return { requiresApproval: false }
     } finally {
       setLoading(false)
     }

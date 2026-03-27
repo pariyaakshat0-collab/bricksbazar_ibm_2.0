@@ -38,6 +38,9 @@ const verifyPhonePeSchema = z.object({
 })
 
 const paymentCommandSchema = z.union([createIntentSchema, verifyRazorpaySchema, verifyPhonePeSchema])
+const isProduction = process.env.NODE_ENV === "production"
+
+class PaymentConfigError extends Error {}
 
 function toPaise(amount: number) {
   return Math.round(amount * 100)
@@ -60,6 +63,9 @@ async function createRazorpayOrder(input: { amount: number; currency: string; re
   const keySecret = process.env.RAZORPAY_KEY_SECRET?.trim() || ""
 
   if (!keyId || !keySecret) {
+    if (isProduction) {
+      throw new PaymentConfigError("Razorpay is not configured")
+    }
     return {
       mode: "mock" as const,
       keyId: "rzp_test_mock_key",
@@ -113,6 +119,13 @@ function verifyRazorpaySignature(input: {
 }) {
   const keySecret = process.env.RAZORPAY_KEY_SECRET?.trim() || ""
   if (!keySecret) {
+    if (isProduction) {
+      return {
+        ok: false,
+        mode: "live" as const,
+        reason: "RAZORPAY_KEY_SECRET is missing",
+      }
+    }
     return {
       ok: true,
       mode: "mock" as const,
@@ -143,6 +156,9 @@ async function createPhonePeOrder(input: { amount: number; currency: string; buy
   const merchantTransactionId = `BBTXN${Date.now()}${Math.floor(100 + Math.random() * 900)}`
 
   if (!merchantId || !saltKey || !saltIndex) {
+    if (isProduction) {
+      throw new PaymentConfigError("PhonePe is not configured")
+    }
     return {
       mode: "mock" as const,
       merchantTransactionId,
@@ -216,6 +232,15 @@ async function verifyPhonePePayment(merchantTransactionId: string) {
   const baseUrl = process.env.PHONEPE_BASE_URL?.trim() || "https://api-preprod.phonepe.com/apis/pg-sandbox"
 
   if (!merchantId || !saltKey || !saltIndex) {
+    if (isProduction) {
+      return {
+        ok: false,
+        mode: "live" as const,
+        state: "CONFIG_MISSING",
+        payload: { merchantTransactionId },
+        reason: "PhonePe configuration is missing",
+      }
+    }
     return {
       ok: true,
       mode: "mock" as const,
@@ -474,9 +499,10 @@ export async function POST(request: Request) {
       gatewayTransactionId: verifiedIntent?.gatewayTransactionId,
     })
   } catch (error) {
+    const status = error instanceof PaymentConfigError ? 503 : 400
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Could not process payment request" },
-      { status: 400 },
+      { status },
     )
   }
 }

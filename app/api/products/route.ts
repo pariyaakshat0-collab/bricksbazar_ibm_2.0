@@ -2,6 +2,7 @@
 import { z } from "zod"
 import { createProduct, listProductsPaginated } from "@/lib/server/market-store"
 import { getSessionUser } from "@/lib/server/auth-user"
+import { getUserVerificationMapByIds } from "@/lib/server/user-store"
 
 const createProductSchema = z.object({
   name: z.string().min(2),
@@ -43,8 +44,14 @@ export async function GET(request: Request) {
     scopeSellerId,
   })
 
+  const sellerVerificationMap = await getUserVerificationMapByIds(result.items.map((product) => product.sellerId))
+  const products = result.items.map((product) => ({
+    ...product,
+    sellerVerified: sellerVerificationMap.get(product.sellerId) === true,
+  }))
+
   return NextResponse.json({
-    products: result.items,
+    products,
     page: result.page,
     limit: result.limit,
     total: result.total,

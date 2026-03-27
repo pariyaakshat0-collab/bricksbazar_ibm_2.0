@@ -23,6 +23,15 @@ export async function middleware(request: NextRequest) {
       return response
     }
 
+    const isUnverifiedOperator =
+      (payload.role === "seller" || payload.role === "distributor") && !payload.verified
+    if (isUnverifiedOperator && pathname !== "/dashboard/verification-pending") {
+      return NextResponse.redirect(new URL("/dashboard/verification-pending", request.url))
+    }
+    if (!isUnverifiedOperator && pathname === "/dashboard/verification-pending") {
+      return NextResponse.redirect(new URL(`/dashboard/${payload.role}`, request.url))
+    }
+
     const matchedRole = rolePaths.find((role) => pathname.startsWith(`/dashboard/${role}`))
     if (matchedRole && payload.role !== matchedRole) {
       return NextResponse.redirect(new URL(`/dashboard/${payload.role}`, request.url))
@@ -30,6 +39,13 @@ export async function middleware(request: NextRequest) {
   }
 
   if (pathname === "/auth" && token) {
+    const switchAccount = request.nextUrl.searchParams.get("switch") === "1"
+    if (switchAccount) {
+      const response = NextResponse.next()
+      response.cookies.delete(SESSION_COOKIE_NAME)
+      return response
+    }
+
     const payload = await verifySessionToken(token)
     if (payload) {
       const returnTo = request.nextUrl.searchParams.get("returnTo")

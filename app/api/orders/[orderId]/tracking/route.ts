@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { getSessionUser } from "@/lib/server/auth-user"
 import { getDeliveryAlerts, getDeliveryByOrderId, getDeliveryOtp, getDeliveryProof, listDeliveryLocations, listOrders } from "@/lib/server/market-store"
+import { getUserVerificationMapByIds } from "@/lib/server/user-store"
 
 export async function GET(_request: Request, { params }: { params: { orderId: string } }) {
   const sessionUser = await getSessionUser()
@@ -25,8 +26,15 @@ export async function GET(_request: Request, { params }: { params: { orderId: st
   }
 
   const delivery = await getDeliveryByOrderId(order.id)
+  const verificationMap = await getUserVerificationMapByIds(
+    [order.sellerId, delivery?.distributorId].filter((id): id is string => Boolean(id)),
+  )
+  const enrichedOrder = {
+    ...order,
+    sellerVerified: verificationMap.get(order.sellerId) === true,
+  }
   if (!delivery) {
-    return NextResponse.json({ order, delivery: null, locations: [], otp: null, proof: null, alerts: [] })
+    return NextResponse.json({ order: enrichedOrder, delivery: null, locations: [], otp: null, proof: null, alerts: [] })
   }
 
   const [locations, otp, proof, alerts] = await Promise.all([
@@ -43,5 +51,15 @@ export async function GET(_request: Request, { params }: { params: { orderId: st
       }
     : null
 
-  return NextResponse.json({ order, delivery, locations, otp: otpForClient, proof, alerts: alerts?.alerts || [] })
+  return NextResponse.json({
+    order: enrichedOrder,
+    delivery: {
+      ...delivery,
+      distributorVerified: verificationMap.get(delivery.distributorId) === true,
+    },
+    locations,
+    otp: otpForClient,
+    proof,
+    alerts: alerts?.alerts || [],
+  })
 }

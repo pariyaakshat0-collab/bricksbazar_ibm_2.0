@@ -23,7 +23,9 @@ type ApiProduct = {
   status: "active" | "out_of_stock"
   rating: number
   image: string
+  sellerId: string
   sellerName: string
+  sellerVerified?: boolean
 }
 
 export default function BuyerProductsPage() {
@@ -99,6 +101,8 @@ export default function BuyerProductsPage() {
       price: product.price,
       unit: product.unit,
       supplier: product.sellerName,
+      supplierId: product.sellerId,
+      supplierVerified: product.sellerVerified === true,
       image: product.image || "/placeholder.svg",
       inStock: product.stock > 0,
     })
@@ -177,7 +181,14 @@ export default function BuyerProductsPage() {
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <h3 className="font-semibold">{product.name}</h3>
-                        <p className="text-sm text-muted-foreground">{product.sellerName}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm text-muted-foreground">{product.sellerName}</p>
+                          {product.sellerVerified ? (
+                            <Badge className="h-5 bg-emerald-100 px-2 text-[10px] font-semibold text-emerald-800 hover:bg-emerald-100">
+                              Verified Seller
+                            </Badge>
+                          ) : null}
+                        </div>
                         <div className="mt-1 flex items-center gap-2">
                           <Badge variant="outline">{product.category}</Badge>
                           <Badge variant={product.stock > 0 ? "default" : "destructive"}>

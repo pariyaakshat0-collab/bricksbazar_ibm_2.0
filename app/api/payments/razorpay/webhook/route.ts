@@ -6,25 +6,30 @@ import {
   markPaymentIntentVerified,
 } from "@/lib/server/market-store"
 
-function verifyWebhookSignature(payload: string, signature: string) {
-  const secret = process.env.RAZORPAY_WEBHOOK_SECRET?.trim() || process.env.RAZORPAY_KEY_SECRET?.trim() || ""
-  if (!secret) {
+function verifyWebhookSignature(payload: string, signature: string, secret: string) {
+  const expected = crypto.createHmac("sha256", secret).update(payload).digest("hex")
+  const expectedBuffer = Buffer.from(expected)
+  const incomingBuffer = Buffer.from(signature)
+  if (expectedBuffer.length !== incomingBuffer.length) {
     return false
   }
-
-  const expected = crypto.createHmac("sha256", secret).update(payload).digest("hex")
-  return expected === signature
+  return crypto.timingSafeEqual(expectedBuffer, incomingBuffer)
 }
 
 export async function POST(request: Request) {
+  const secret = process.env.RAZORPAY_WEBHOOK_SECRET?.trim() || ""
+  if (!secret) {
+    return NextResponse.json({ error: "Razorpay webhook is not configured" }, { status: 503 })
+  }
+
   const rawBody = await request.text()
   const signature = request.headers.get("x-razorpay-signature")?.trim() || ""
 
-  if (!signature || !verifyWebhookSignature(rawBody, signature)) {
+  if (!signature || !verifyWebhookSignature(rawBody, signature, secret)) {
     return NextResponse.json({ error: "Invalid webhook signature" }, { status: 401 })
   }
 
-  const payload = JSON.parse(rawBody) as {
+  let payload: {
     event?: string
     payload?: {
       payment?: {
@@ -35,6 +40,11 @@ export async function POST(request: Request) {
         }
       }
     }
+  }
+  try {
+    payload = JSON.parse(rawBody) as typeof payload
+  } catch {
+    return NextResponse.json({ error: "Invalid webhook payload" }, { status: 400 })
   }
 
   const orderId = payload.payload?.payment?.entity?.order_id

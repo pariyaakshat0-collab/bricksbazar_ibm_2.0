@@ -11,6 +11,8 @@ import {
   type OrderStatus,
 } from "@/lib/server/market-store"
 import { getSessionUser } from "@/lib/server/auth-user"
+import { getUserVerificationMapByIds } from "@/lib/server/user-store"
+import { listSupplierOrderRatingsByOrderIds } from "@/lib/server/supplier-rating-store"
 
 const createOrderSchema = z.object({
   items: z.array(
@@ -53,11 +55,25 @@ export async function GET(request: Request) {
   })
 
   const orderIds = new Set(pageResult.items.map((order) => order.id))
-  const [shipments, deliveries] = await Promise.all([
+  const [shipments, deliveries, ratings] = await Promise.all([
     listOrderShipmentsByOrderIds(Array.from(orderIds)),
     listDeliveries(),
+    listSupplierOrderRatingsByOrderIds(
+      Array.from(orderIds),
+      sessionUser.role === "buyer" ? sessionUser.userId : undefined,
+    ),
   ])
   const deliveriesByOrderId = new Map(deliveries.map((delivery) => [delivery.orderId, delivery]))
+  const ratingsByOrderId = new Map<string, (typeof ratings)[number]>()
+  ratings.forEach((rating) => {
+    if (!ratingsByOrderId.has(rating.orderId)) {
+      ratingsByOrderId.set(rating.orderId, rating)
+    }
+  })
+  const verificationMap = await getUserVerificationMapByIds([
+    ...pageResult.items.map((order) => order.sellerId),
+    ...deliveries.map((delivery) => delivery.distributorId),
+  ])
   const shipmentsByOrder = new Map<string, typeof shipments>()
   shipments.forEach((shipment) => {
     if (!orderIds.has(shipment.orderId)) return
@@ -69,15 +85,30 @@ export async function GET(request: Request) {
     shipmentsByOrder.set(shipment.orderId, rows)
   })
 
-  const orders = pageResult.items.map((order) => ({
-    ...order,
-    shipments: shipmentsByOrder.get(order.id) || [],
-    deliveryAddress: deliveriesByOrderId.get(order.id)?.deliveryAddress,
-    pickupAddress: deliveriesByOrderId.get(order.id)?.pickupAddress,
-    distributorName: deliveriesByOrderId.get(order.id)?.distributorName,
-    deliveryStatus: deliveriesByOrderId.get(order.id)?.status,
-    vehicleType: deliveriesByOrderId.get(order.id)?.vehicleType,
-  }))
+  const orders = pageResult.items.map((order) => {
+    const delivery = deliveriesByOrderId.get(order.id)
+    return {
+      ...order,
+      shipments: shipmentsByOrder.get(order.id) || [],
+      sellerVerified: verificationMap.get(order.sellerId) === true,
+      deliveryAddress: delivery?.deliveryAddress,
+      pickupAddress: delivery?.pickupAddress,
+      distributorId: delivery?.distributorId,
+      distributorName: delivery?.distributorName,
+      distributorVerified: delivery ? verificationMap.get(delivery.distributorId) === true : false,
+      deliveryStatus: delivery?.status,
+      vehicleType: delivery?.vehicleType,
+      supplierRating: ratingsByOrderId.get(order.id)
+        ? {
+            supplierId: ratingsByOrderId.get(order.id)!.supplierId,
+            supplierName: ratingsByOrderId.get(order.id)!.supplierName,
+            rating: ratingsByOrderId.get(order.id)!.rating,
+            reviewText: ratingsByOrderId.get(order.id)!.reviewText,
+            updatedAt: ratingsByOrderId.get(order.id)!.updatedAt,
+          }
+        : null,
+    }
+  })
 
   return NextResponse.json({
     orders,

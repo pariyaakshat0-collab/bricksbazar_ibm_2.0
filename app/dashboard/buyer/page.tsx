@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Calculator, ShoppingCart, Truck, Star, TrendingUp, Package, MapPin, Building2 } from "lucide-react"
 import Link from "next/link"
+import { RecommendedSuppliersCard } from "@/components/buyer/recommended-suppliers-card"
 
 export default function BuyerDashboard() {
   return (
@@ -189,48 +190,7 @@ export default function BuyerDashboard() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Trusted Suppliers</CardTitle>
-            <CardDescription>Your verified supplier network</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {[
-                { name: "Local Brick Co.", rating: 4.8, orders: 15, badge: "Local Verified", location: "2.5 km away" },
-                { name: "BuildMart", rating: 4.6, orders: 8, badge: "Premium", location: "5.2 km away" },
-                { name: "Steel Works Ltd.", rating: 4.9, orders: 12, badge: "Distributor", location: "8.1 km away" },
-              ].map((supplier) => (
-                <div key={supplier.name} className="flex items-center justify-between p-3 border rounded-lg">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <p className="font-medium">{supplier.name}</p>
-                      <Badge variant="secondary" className="text-xs">
-                        {supplier.badge}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                        {supplier.rating}
-                      </span>
-                      <span>{supplier.orders} orders</span>
-                      <span className="flex items-center gap-1">
-                        <MapPin className="h-3 w-3" />
-                        {supplier.location}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <Link href="/dashboard/buyer/suppliers">
-              <Button variant="outline" className="w-full mt-4 bg-transparent">
-                View All Suppliers
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
+        <RecommendedSuppliersCard />
       </div>
 
       {/* Location-based Pricing */}

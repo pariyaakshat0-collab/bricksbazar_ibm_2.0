@@ -6,6 +6,8 @@ export type StoredCartItem = {
   quantity: number
   unit: string
   supplier: string
+  supplierId?: string
+  supplierVerified?: boolean
   image: string
   inStock: boolean
 }
@@ -30,6 +32,8 @@ function isValidItem(value: unknown): value is StoredCartItem {
     item.quantity > 0 &&
     typeof item.unit === "string" &&
     typeof item.supplier === "string" &&
+    (item.supplierId === undefined || typeof item.supplierId === "string") &&
+    (item.supplierVerified === undefined || typeof item.supplierVerified === "boolean") &&
     typeof item.image === "string" &&
     typeof item.inStock === "boolean"
   )
@@ -75,6 +79,8 @@ export function addToCart(item: Omit<StoredCartItem, "quantity">, quantity = 1) 
             price: item.price,
             unit: item.unit,
             supplier: item.supplier,
+            supplierId: item.supplierId,
+            supplierVerified: item.supplierVerified,
             image: item.image,
             inStock: item.inStock,
           }

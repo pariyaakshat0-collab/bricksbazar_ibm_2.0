@@ -18,6 +18,7 @@
     "env:secret": "node scripts/generate-auth-secret.mjs",
     "seed:admin": "node scripts/seed-admin.mjs",
     "db:bootstrap": "node scripts/bootstrap-market-db.mjs",
+    "e2e:live": "node scripts/e2e-live-flow.mjs",
     "lint": "next lint",
     "start": "next start",
     "prisma:generate": "prisma generate",

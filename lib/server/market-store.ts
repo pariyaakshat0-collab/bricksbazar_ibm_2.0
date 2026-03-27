@@ -1038,6 +1038,58 @@ async function ensureMarketTables() {
     )
   `)
 
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_products_category_idx ON market_products(category)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_products_seller_idx ON market_products(seller_id)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_products_status_idx ON market_products(status)")
+
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_orders_status_date_idx ON market_orders(status, date)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_orders_buyer_date_idx ON market_orders(buyer_id, date)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_orders_seller_date_idx ON market_orders(seller_id, date)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_orders_tracking_idx ON market_orders(tracking_number)")
+
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_order_shipments_order_idx ON market_order_shipments(order_id)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_order_shipments_seller_idx ON market_order_shipments(seller_id)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_order_shipments_status_idx ON market_order_shipments(status)")
+
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_payments_order_idx ON market_payments(order_id)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_payments_user_idx ON market_payments(user_id)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_payments_status_idx ON market_payments(status)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_payments_created_idx ON market_payments(created_at)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_payments_intent_idx ON market_payments(payment_intent_id)")
+
+  await prisma.$executeRawUnsafe(
+    "CREATE UNIQUE INDEX IF NOT EXISTS market_payment_intents_gateway_order_uidx ON market_payment_intents(gateway_order_id)",
+  )
+  await prisma.$executeRawUnsafe(
+    "CREATE UNIQUE INDEX IF NOT EXISTS market_payment_intents_gateway_txn_uidx ON market_payment_intents(gateway_transaction_id)",
+  )
+  await prisma.$executeRawUnsafe(
+    "CREATE INDEX IF NOT EXISTS market_payment_intents_buyer_status_idx ON market_payment_intents(buyer_id, status)",
+  )
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_payment_intents_provider_idx ON market_payment_intents(provider)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_payment_intents_created_idx ON market_payment_intents(created_at)")
+
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_deliveries_status_idx ON market_deliveries(status)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_deliveries_buyer_idx ON market_deliveries(buyer_id)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_deliveries_seller_idx ON market_deliveries(seller_id)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_deliveries_distributor_idx ON market_deliveries(distributor_id)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_deliveries_location_ts_idx ON market_deliveries(last_location_at)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_deliveries_updated_idx ON market_deliveries(updated_at)")
+
+  await prisma.$executeRawUnsafe(
+    "CREATE INDEX IF NOT EXISTS market_delivery_locations_delivery_created_idx ON market_delivery_locations(delivery_id, created_at)",
+  )
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_delivery_locations_order_idx ON market_delivery_locations(order_id)")
+
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_delivery_otps_expiry_idx ON market_delivery_otps(expires_at)")
+
+  await prisma.$executeRawUnsafe(
+    "CREATE INDEX IF NOT EXISTS market_distributor_locations_distributor_idx ON market_distributor_locations(distributor_id)",
+  )
+  await prisma.$executeRawUnsafe(
+    "CREATE INDEX IF NOT EXISTS market_distributor_locations_status_idx ON market_distributor_locations(status)",
+  )
+
   // Remove legacy demo seed rows so MP-aligned catalog becomes the default baseline.
   await prisma.$executeRawUnsafe(
     "DELETE FROM market_products WHERE id IN ('prod-001', 'prod-002', 'prod-003', 'prod-004')",
